@@ -1,0 +1,81 @@
+<?php
+/**
+ * Salasel Babel — self-service "link your domain to your server" guide.
+ *
+ * Shows a clear, detailed Arabic explanation on the client's server/VPS
+ * service page: the server IP (auto-filled) + step-by-step instructions to
+ * point a domain (A record at the registrar) and add it in cPanel.
+ *
+ * Works for any domain with no DNS API needed. (One-click auto-linking can be
+ * added later once a DNS provider/API is configured.)
+ */
+
+if (!defined('WHMCS')) {
+    die('Access Denied');
+}
+
+use WHMCS\Database\Capsule;
+
+add_hook('ClientAreaProductDetailsOutput', 1, function ($vars) {
+    $sid = (int) ($_GET['id'] ?? 0);
+    if ($sid <= 0) {
+        return '';
+    }
+
+    $svc = Capsule::table('tblhosting')->where('id', $sid)->first();
+    if (!$svc) {
+        return '';
+    }
+    $ip = trim((string) $svc->dedicatedip);
+    if ($ip === '') {
+        return ''; // only servers/VPS with a dedicated IP
+    }
+    $ip = htmlspecialchars($ip, ENT_QUOTES, 'UTF-8');
+
+    return <<<HTML
+<div class="card" dir="rtl" style="margin-top:22px;border:1px solid #d7e2ec;border-radius:10px;overflow:hidden">
+  <div style="background:#1B4585;color:#fff;padding:12px 16px;font-weight:700;font-size:16px">
+    🔗 اربط نطاقك بهذا السيرفر
+  </div>
+  <div style="padding:16px;line-height:1.9;color:#223">
+    <p style="margin:0 0 12px">لكي يفتح نطاقك (مثل <code>yoursite.com</code>) موقعك على هذا السيرفر، اتبع خطوتين بسيطتين:</p>
+
+    <div style="background:#eef5ff;border:1px dashed #1B4585;border-radius:8px;padding:10px 14px;margin-bottom:16px">
+      عنوان سيرفرك (IP):
+      <strong style="font-size:18px;direction:ltr;display:inline-block">$ip</strong>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-weight:700;color:#1B4585;margin-bottom:6px">الخطوة 1 — وجّه نطاقك إلى السيرفر (DNS)</div>
+      ادخل لوحة إدارة نطاقك لدى الجهة التي اشتريت منها النطاق (المُسجِّل)، وأضف سجلّي <strong>A</strong> كما يلي:
+      <table class="table table-bordered" style="margin-top:8px;background:#fff;text-align:center">
+        <thead><tr style="background:#f3f6fa"><th>النوع</th><th>الاسم / المضيف</th><th>القيمة</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td><code>@</code></td><td style="direction:ltr">$ip</td></tr>
+          <tr><td>A</td><td><code>www</code></td><td style="direction:ltr">$ip</td></tr>
+        </tbody>
+      </table>
+      <small style="color:#667">البديل: إن رغبت أن ندير DNS نطاقك بالكامل، حوّل <em>nameservers</em> النطاق إلى خوادم الأسماء الخاصة بنا (تظهر في صفحة نطاقك).</small>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-weight:700;color:#1B4585;margin-bottom:6px">الخطوة 2 — عرّف النطاق على السيرفر (cPanel)</div>
+      <ol style="margin:0;padding-right:20px">
+        <li>ادخل <strong>cPanel</strong> من هذه الصفحة (زر الدخول).</li>
+        <li>افتح <strong>Domains → Create a New Domain</strong>.</li>
+        <li>اكتب نطاقك ثم <strong>Submit</strong> — يُنشأ الموقع تلقائياً.</li>
+      </ol>
+    </div>
+
+    <div style="background:#fff8e6;border:1px solid #f0d98a;border-radius:8px;padding:10px 14px">
+      <strong>ملاحظات مهمة:</strong>
+      <ul style="margin:6px 0 0;padding-right:20px">
+        <li>بعد توجيه DNS، يستغرق الانتشار من <strong>دقائق إلى ساعتين</strong>.</li>
+        <li>للتحقّق أن النطاق صار يشير لسيرفرك: افتح <a href="https://www.whatsmydns.net/" target="_blank" rel="noopener">whatsmydns.net</a> واكتب نطاقك ونوع <code>A</code>.</li>
+        <li>تحتاج مساعدة؟ <a href="submitticket.php">افتح تذكرة دعم</a> ونربطه لك.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+HTML;
+});

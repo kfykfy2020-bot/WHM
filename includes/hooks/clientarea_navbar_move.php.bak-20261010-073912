@@ -1,0 +1,31 @@
+<?php
+if (!defined('WHMCS')) { die('Access Denied'); }
+// Client area: move Notifications + Language + Logout from the top white bar into the blue main navbar,
+// leaving only the logo in the top white bar.
+add_hook('ClientAreaFooterOutput', 1, function ($vars) {
+    return <<<'HTML'
+<style>
+#primary-nav .navbar-right > li > a#accountNotifications,
+#primary-nav .navbar-right > li > a#languageChooser,
+#primary-nav .navbar-right > li.primary-action > a { color:#fff !important; background:transparent !important; border:0 !important; box-shadow:none !important; }
+#primary-nav .navbar-right > li > a#accountNotifications:hover,
+#primary-nav .navbar-right > li > a#languageChooser:hover,
+#primary-nav .navbar-right > li.primary-action > a:hover { color:#fff !important; opacity:.85; }
+</style>
+<script>
+(function(){
+  function move(){
+    var target=document.querySelector('#primary-nav ul.nav.navbar-nav.navbar-right');
+    if(!target) return;
+    ['languageChooser','accountNotifications'].forEach(function(id){
+      var a=document.getElementById(id);
+      if(a){ var li=a.closest('li'); if(li && li.parentElement!==target){ target.insertBefore(li, target.firstChild); } }
+    });
+    var lo=document.querySelector('ul.top-nav li.primary-action');
+    if(lo && lo.closest('ul.top-nav')){ target.appendChild(lo); var a=lo.querySelector('a'); if(a){ a.classList.remove('btn'); } }
+  }
+  if(document.readyState!=='loading') move(); else document.addEventListener('DOMContentLoaded', move);
+})();
+</script>
+HTML;
+});

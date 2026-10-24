@@ -1,0 +1,58 @@
+<?php
+if (!defined('WHMCS')) { die('Access Denied'); }
+// Client area: move every item of the top white bar (ul.top-nav) into the blue main
+// navbar, then order the account-side items by priority (RTL: most important at the
+// far RIGHT = read first) and drop the redundant "Account" dropdown when logged out.
+//   logged out -> (R)  Login . Register . Language . Cart  (L)
+//   logged in  -> (R)  Account . Notifications . Language . Logout  (L)
+// NOTE: in this navbar the FIRST DOM child renders LEFT-most, so we append items in
+// DESCENDING priority (lowest priority first = left) to put priority 1 on the right.
+add_hook('ClientAreaFooterOutput', 1, function ($vars) {
+    return <<<'HTML'
+<style>
+#primary-nav .navbar-right > li.sb-moved > a { color:#fff !important; background:transparent !important; border:0 !important; box-shadow:none !important; }
+#primary-nav .navbar-right > li.sb-moved > a:hover { color:#fff !important; opacity:.85; }
+</style>
+<script>
+(function(){
+  function run(){
+    var target=document.querySelector('#primary-nav ul.nav.navbar-nav.navbar-right');
+    if(!target) return;
+    var src=document.querySelector('ul.top-nav');
+    if(src){
+      while(src.firstElementChild){
+        var li=src.firstElementChild;
+        li.classList.add('sb-moved');
+        target.appendChild(li);
+        var a0=li.querySelector('a'); if(a0){ a0.classList.remove('btn'); }
+      }
+    }
+    var loggedIn=!!(document.querySelector('a[href*="logout"]')||document.querySelector('#accountNotifications'));
+    function pri(li){
+      var a=li.querySelector(':scope > a');
+      var href=((a&&a.getAttribute('href'))||'').toLowerCase();
+      var id=((a&&a.id)||'').toLowerCase();
+      var acls=((a&&a.className)||'').toLowerCase();
+      var liId=(li.id||'').toLowerCase();
+      var txt=(li.textContent||'');
+      if(liId.indexOf('account')>-1) return loggedIn?1:99;      // user menu (R) / hide when logged out
+      if(!loggedIn && href.indexOf('clientarea.php')>-1) return 1; // Login (R)
+      if(id.indexOf('notification')>-1) return 2;               // Notifications
+      if(href.indexOf('register.php')>-1) return 2;             // Register
+      if(id.indexOf('language')>-1 || acls.indexOf('choose-language')>-1) return 3; // Language
+      if(href.indexOf('logout')>-1 || /خروج/.test(txt)) return 4; // Logout (L)
+      if(href.indexOf('cart.php')>-1) return 5;                 // Cart (far L)
+      return 3;
+    }
+    var items=[].slice.call(target.children);
+    items.forEach(function(li){ if(pri(li)===99){ li.style.display='none'; } });
+    items.filter(function(li){ return li.style.display!=='none'; })
+      .map(function(li,i){ return {li:li,p:pri(li),i:i}; })
+      .sort(function(a,b){ return (b.p-a.p)||(a.i-b.i); })
+      .forEach(function(o){ target.appendChild(o.li); });
+  }
+  if(document.readyState!=='loading') run(); else document.addEventListener('DOMContentLoaded', run);
+})();
+</script>
+HTML;
+});

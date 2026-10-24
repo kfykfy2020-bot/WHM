@@ -1,0 +1,30 @@
+<?php
+if (!defined('WHMCS')) { die('Access Denied'); }
+// Client area: move EVERY item of the top white bar (ul.top-nav) into the blue main navbar,
+// leaving only the logo on the white bar. Works on all pages:
+//   logged in  -> Notifications + Language + Logout
+//   login page -> Login + Register
+add_hook('ClientAreaFooterOutput', 1, function ($vars) {
+    return <<<'HTML'
+<style>
+#primary-nav .navbar-right > li.sb-moved > a { color:#fff !important; background:transparent !important; border:0 !important; box-shadow:none !important; }
+#primary-nav .navbar-right > li.sb-moved > a:hover { color:#fff !important; opacity:.85; }
+</style>
+<script>
+(function(){
+  function move(){
+    var target=document.querySelector('#primary-nav ul.nav.navbar-nav.navbar-right');
+    var src=document.querySelector('ul.top-nav');
+    if(!target || !src) return;
+    while(src.firstElementChild){
+      var li=src.firstElementChild;
+      li.classList.add('sb-moved');
+      target.appendChild(li);
+      var a=li.querySelector('a'); if(a){ a.classList.remove('btn'); }
+    }
+  }
+  if(document.readyState!=='loading') move(); else document.addEventListener('DOMContentLoaded', move);
+})();
+</script>
+HTML;
+});

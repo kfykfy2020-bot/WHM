@@ -1,0 +1,29 @@
+<?php
+if (!defined('WHMCS')) { die('Access Denied'); }
+// Client area: move "Notifications" (#accountNotifications) + "Language" (#languageChooser)
+// from the top white bar (ul.top-nav) into the blue main navbar (#primary-nav .navbar-right), next to the account menu.
+add_hook('ClientAreaFooterOutput', 1, function ($vars) {
+    return <<<'HTML'
+<style>
+#primary-nav .navbar-right > li > a#accountNotifications,
+#primary-nav .navbar-right > li > a#languageChooser,
+#primary-nav .navbar-right > li.open > a#accountNotifications,
+#primary-nav .navbar-right > li.open > a#languageChooser { color:#fff !important; }
+#primary-nav .navbar-right > li > a#accountNotifications:hover,
+#primary-nav .navbar-right > li > a#languageChooser:hover { color:#fff !important; opacity:.85; }
+</style>
+<script>
+(function(){
+  function move(){
+    var target=document.querySelector('#primary-nav ul.nav.navbar-nav.navbar-right');
+    if(!target) return;
+    ['languageChooser','accountNotifications'].forEach(function(id){
+      var a=document.getElementById(id);
+      if(a){ var li=a.closest('li'); if(li && li.parentElement!==target){ target.insertBefore(li, target.firstChild); } }
+    });
+  }
+  if(document.readyState!=='loading') move(); else document.addEventListener('DOMContentLoaded', move);
+})();
+</script>
+HTML;
+});

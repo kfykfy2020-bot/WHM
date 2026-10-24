@@ -1,0 +1,13 @@
+<div class="panel panel-default" style="margin-top:15px">
+  <div class="panel-heading"><h3 class="panel-title">بيانات الخادم</h3></div>
+  <div class="panel-body">
+    {if $ip}
+      <p><strong>عنوان IP:</strong> <code>{$ip}</code></p>
+      <p><strong>اسم المستخدم:</strong> <code>root</code> (Linux · SSH) — أو <code>admin</code> (Windows · RDP)</p>
+      <p class="text-muted"><small>كلمة مرور الجذر هي كلمة مرور الخدمة؛ ويمكنك تغييرها من زر «تغيير كلمة المرور».</small></p>
+    {else}
+      <p>الخادم قيد التجهيز — سيظهر عنوان الـ IP خلال دقائق قليلة. حدّث الصفحة.</p>
+    {/if}
+    {if $instanceid}<p class="text-muted" style="margin-top:8px"><small>معرّف الخادم: {$instanceid}</small></p>{/if}
+  </div>
+</div>

@@ -1,0 +1,515 @@
+<?php
+/**
+ * Salasel Cloud — Contabo provisioning module for WHMCS (custom, white-label).
+ *
+ * Auto-creates a Contabo compute instance (VPS/VDS) when an order is activated,
+ * and lets the client manage it (start / stop / restart) from the WHMCS client
+ * area. The word "Contabo" is never shown to the customer.
+ *
+ * ── Credentials (Setup ▸ Products/Services ▸ Servers ▸ add a server) ──
+ *   Username    = Contabo API User (the email under Account Secret)
+ *   Password    = Contabo API Password (Account Secret)
+ *   Access Hash = <OAuth2 client_id>|<OAuth2 client_secret>   (pipe-separated)
+ *   Hostname    = api.contabo.com   (informational)
+ *
+ * ── Per-product Module Settings (config options) ──
+ *   Product ID  = Contabo productId (e.g. V45)   ← required
+ *   Region      = EU / US-central / US-east / US-west / SIN
+ *   Image ID    = OS image UUID (blank = Contabo default Ubuntu)
+ *   Period      = 1 / 3 / 6 / 12 (months)
+ *   SSH Key     = optional Contabo secretId of an SSH key
+ *
+ * Salasel Babel IT — salaselbabel.com
+ */
+
+if (!defined('WHMCS')) {
+    die('This file cannot be accessed directly');
+}
+
+use WHMCS\Database\Capsule;
+
+if (!defined('CONTABO_AUTH_URL')) {
+    define('CONTABO_AUTH_URL', 'https://auth.contabo.com/auth/realms/contabo/protocol/openid-connect/token');
+}
+if (!defined('CONTABO_API_BASE')) {
+    define('CONTABO_API_BASE', 'https://api.contabo.com');
+}
+
+function contabo_MetaData()
+{
+    return [
+        'DisplayName' => 'Salasel Cloud',
+        'APIVersion' => '1.1',
+        'RequiresServer' => true,
+    ];
+}
+
+function contabo_ConfigOptions()
+{
+    return [
+        'Product ID' => [
+            'Type' => 'text', 'Size' => '20',
+            'Description' => 'Contabo productId, e.g. V45 (required). Use the server "استعراض المنتجات والصور" button then read Module Log.',
+        ],
+        'Region' => [
+            'Type' => 'dropdown',
+            'Options' => 'EU,US-central,US-east,US-west,SIN',
+            'Default' => 'EU',
+        ],
+        'Image ID' => [
+            'Type' => 'text', 'Size' => '40',
+            'Description' => 'OS image UUID (blank = Contabo default Ubuntu).',
+        ],
+        'Period (months)' => [
+            'Type' => 'dropdown',
+            'Options' => '1,3,6,12',
+            'Default' => '1',
+        ],
+        'SSH Key Secret ID' => [
+            'Type' => 'text', 'Size' => '20',
+            'Description' => 'Optional Contabo secretId (number) of an SSH key to inject.',
+        ],
+    ];
+}
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+function contabo_getCreds(array $params): array
+{
+    // The "Access Hash" field may contain EITHER "client_id|client_secret" OR just the
+    // client_secret alone (simpler for the operator — no prefix/pipe to mistype).
+    // When only the secret is given, default to this account's known OAuth2 client id.
+    $raw = trim((string) ($params['serveraccesshash'] ?? ''));
+    $clientId = 'INT-14729134'; // Salasel Babel Contabo OAuth2 client id (customer 14729134)
+    $clientSecret = $raw;
+    if (strpos($raw, '|') !== false) {
+        $parts = preg_split('/\|/', $raw, 2);
+        $cid = trim((string) ($parts[0] ?? ''));
+        $sec = trim((string) ($parts[1] ?? ''));
+        if ($cid !== '') {
+            $clientId = $cid;
+        }
+        $clientSecret = $sec;
+    }
+    // strip any stray whitespace/newlines that a paste may have introduced
+    $clientSecret = preg_replace('/\s+/', '', (string) $clientSecret);
+    return [
+        'client_id'     => $clientId,
+        'client_secret' => $clientSecret,
+        'username'      => trim((string) ($params['serverusername'] ?? '')),
+        'password'      => (string) ($params['serverpassword'] ?? ''),
+    ];
+}
+
+function contabo_apiToken(array $creds): string
+{
+    foreach (['client_id', 'client_secret', 'username', 'password'] as $k) {
+        if ($creds[$k] === '') {
+            throw new \RuntimeException('Missing credential: ' . $k . ' (check the WHMCS Server entry).');
+        }
+    }
+    $ch = curl_init(CONTABO_AUTH_URL);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query([
+            'client_id'     => $creds['client_id'],
+            'client_secret' => $creds['client_secret'],
+            'username'      => $creds['username'],
+            'password'      => $creds['password'],
+            'grant_type'    => 'password',
+        ]),
+        CURLOPT_TIMEOUT => 45,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+    ]);
+    $res = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($res === false) {
+        throw new \RuntimeException('Auth connection error: ' . $err);
+    }
+    $j = json_decode($res, true);
+    if ($code !== 200 || empty($j['access_token'])) {
+        throw new \RuntimeException('Auth failed (HTTP ' . $code . '): ' . substr((string) $res, 0, 300));
+    }
+    return $j['access_token'];
+}
+
+function contabo_uuid(): string
+{
+    $d = random_bytes(16);
+    $d[6] = chr((ord($d[6]) & 0x0f) | 0x40);
+    $d[8] = chr((ord($d[8]) & 0x3f) | 0x80);
+    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($d), 4));
+}
+
+function contabo_apiRequest(string $token, string $method, string $path, ?array $body = null): array
+{
+    $ch = curl_init(CONTABO_API_BASE . $path);
+    $headers = [
+        'Authorization: Bearer ' . $token,
+        'x-request-id: ' . contabo_uuid(),
+        'Accept: application/json',
+    ];
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_TIMEOUT => 60,
+    ];
+    if ($body !== null) {
+        $headers[] = 'Content-Type: application/json';
+        $opts[CURLOPT_POSTFIELDS] = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+    $opts[CURLOPT_HTTPHEADER] = $headers;
+    curl_setopt_array($ch, $opts);
+    $res = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($res === false) {
+        throw new \RuntimeException('API connection error: ' . $err);
+    }
+    $j = json_decode($res, true);
+    if ($code < 200 || $code >= 300) {
+        $msg = is_array($j) ? json_encode($j, JSON_UNESCAPED_UNICODE) : (string) $res;
+        throw new \RuntimeException('API ' . $method . ' ' . $path . ' failed (HTTP ' . $code . '): ' . substr($msg, 0, 400));
+    }
+    return is_array($j) ? $j : [];
+}
+
+function contabo_createSecret(string $token, string $name, string $value, string $type): int
+{
+    $resp = contabo_apiRequest($token, 'POST', '/v1/secrets', [
+        'name' => $name, 'value' => $value, 'type' => $type,
+    ]);
+    $id = $resp['data'][0]['secretId'] ?? null;
+    if (!$id) {
+        throw new \RuntimeException('Secret create failed: ' . json_encode($resp));
+    }
+    return (int) $id;
+}
+
+function contabo_genPassword(int $len = 18): string
+{
+    $c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    $s = '';
+    for ($i = 0; $i < $len; $i++) {
+        $s .= $c[random_int(0, strlen($c) - 1)];
+    }
+    return $s . '!7q';
+}
+
+function contabo_extractIp(array $inst): string
+{
+    if (!empty($inst['ipConfig']['v4']['ip'])) {
+        return (string) $inst['ipConfig']['v4']['ip'];
+    }
+    if (!empty($inst['ipv4'])) {
+        return (string) $inst['ipv4'];
+    }
+    return '';
+}
+
+function contabo_store(int $serviceid, string $instanceId, int $pwSecretId = 0): void
+{
+    if (!Capsule::schema()->hasTable('mod_contabo')) {
+        Capsule::schema()->create('mod_contabo', function ($t) {
+            $t->integer('serviceid')->primary();
+            $t->string('instanceid', 64)->nullable();
+            $t->integer('pwsecretid')->default(0);
+        });
+    }
+    Capsule::table('mod_contabo')->updateOrInsert(
+        ['serviceid' => $serviceid],
+        ['instanceid' => $instanceId, 'pwsecretid' => $pwSecretId]
+    );
+}
+
+function contabo_instanceId(int $serviceid): string
+{
+    if (!Capsule::schema()->hasTable('mod_contabo')) {
+        return '';
+    }
+    return (string) (Capsule::table('mod_contabo')->where('serviceid', $serviceid)->value('instanceid') ?? '');
+}
+
+/* ───────────────────────── lifecycle ───────────────────────── */
+
+function contabo_CreateAccount(array $params)
+{
+    try {
+        if (trim((string) $params['configoption1']) === '') {
+            return 'Contabo: Product ID (configoption1) is empty for this product.';
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+
+        $rootPw = (string) ($params['password'] ?? '');
+        if ($rootPw === '') {
+            $rootPw = contabo_genPassword();
+        }
+        $pwSecretId = contabo_createSecret($token, 'sb-svc' . $params['serviceid'] . '-pw', $rootPw, 'password');
+
+        $body = [
+            'productId'    => trim((string) $params['configoption1']),
+            'region'       => trim((string) $params['configoption2']) ?: 'EU',
+            'period'       => (int) (trim((string) $params['configoption4']) ?: 1),
+            'displayName'  => 'SB-' . $params['serviceid'],
+            'defaultUser'  => 'root',
+            'rootPassword' => $pwSecretId,
+        ];
+        if (trim((string) $params['configoption3']) !== '') {
+            $body['imageId'] = trim((string) $params['configoption3']);
+        }
+        if (trim((string) $params['configoption5']) !== '') {
+            $body['sshKeys'] = [(int) trim((string) $params['configoption5'])];
+        }
+
+        $resp = contabo_apiRequest($token, 'POST', '/v1/compute/instances', $body);
+        $inst = $resp['data'][0] ?? [];
+        $instanceId = (string) ($inst['instanceId'] ?? '');
+        if ($instanceId === '') {
+            return 'Contabo: no instanceId in response: ' . substr(json_encode($resp), 0, 300);
+        }
+
+        contabo_store((int) $params['serviceid'], $instanceId, $pwSecretId);
+
+        $ip = contabo_extractIp($inst);
+        // Contabo assigns the IPv4 a few seconds after creation; poll briefly so WHMCS records it.
+        if ($ip === '') {
+            for ($i = 0; $i < 5; $i++) {
+                sleep(3);
+                try {
+                    $chk = contabo_apiRequest($token, 'GET', '/v1/compute/instances/' . $instanceId);
+                    $ip = contabo_extractIp($chk['data'][0] ?? []);
+                    if ($ip !== '') {
+                        break;
+                    }
+                } catch (\Throwable $ignore) {
+                }
+            }
+        }
+        if ($ip !== '') {
+            Capsule::table('tblhosting')->where('id', $params['serviceid'])->update(['dedicatedip' => $ip]);
+        }
+
+        logModuleCall('contabo', 'CreateAccount', $body, $resp);
+        return 'success';
+    } catch (\Throwable $e) {
+        logModuleCall('contabo', 'CreateAccount', $params['serviceid'] ?? '', $e->getMessage());
+        return $e->getMessage();
+    }
+}
+
+function contabo_SuspendAccount(array $params)
+{
+    return contabo_power($params, 'stop');
+}
+
+function contabo_UnsuspendAccount(array $params)
+{
+    return contabo_power($params, 'start');
+}
+
+function contabo_TerminateAccount(array $params)
+{
+    try {
+        $id = contabo_instanceId((int) $params['serviceid']);
+        if ($id === '') {
+            return 'No instance id stored for this service.';
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+        // Contabo cancels the instance (effective at end of the paid term).
+        contabo_apiRequest($token, 'POST', '/v1/compute/instances/' . $id . '/cancel');
+        Capsule::table('mod_contabo')->where('serviceid', $params['serviceid'])->delete();
+        return 'success';
+    } catch (\Throwable $e) {
+        logModuleCall('contabo', 'TerminateAccount', $params['serviceid'] ?? '', $e->getMessage());
+        return $e->getMessage();
+    }
+}
+
+function contabo_ChangePassword_disabled(array $params)
+{
+    try {
+        $id = contabo_instanceId((int) $params['serviceid']);
+        if ($id === '') {
+            return 'No instance id stored for this service.';
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+        $newPw = (string) $params['password'];
+        if ($newPw === '') {
+            $newPw = contabo_genPassword();
+        }
+        $pwSecretId = contabo_createSecret($token, 'sb-svc' . $params['serviceid'] . '-pw-' . time(), $newPw, 'password');
+        // Contabo has no live password change — it is applied via a reinstall (PUT).
+        $body = ['rootPassword' => $pwSecretId, 'defaultUser' => 'root'];
+        $imageId = trim((string) $params['configoption3']);
+        if ($imageId === '') {
+            $cur = contabo_apiRequest($token, 'GET', '/v1/compute/instances/' . $id);
+            $imageId = (string) ($cur['data'][0]['imageId'] ?? '');
+        }
+        if ($imageId !== '') {
+            $body['imageId'] = $imageId;
+        }
+        contabo_apiRequest($token, 'PUT', '/v1/compute/instances/' . $id, $body);
+        return 'success';
+    } catch (\Throwable $e) {
+        logModuleCall('contabo', 'ChangePassword', $params['serviceid'] ?? '', $e->getMessage());
+        return $e->getMessage();
+    }
+}
+
+function contabo_power(array $params, string $action)
+{
+    try {
+        $id = contabo_instanceId((int) $params['serviceid']);
+        if ($id === '') {
+            return 'No instance id stored for this service.';
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+        contabo_apiRequest($token, 'POST', '/v1/compute/instances/' . $id . '/actions/' . $action);
+        return 'success';
+    } catch (\Throwable $e) {
+        logModuleCall('contabo', 'power:' . $action, $params['serviceid'] ?? '', $e->getMessage());
+        return $e->getMessage();
+    }
+}
+
+/* ───────────────────────── server / admin / client ───────────────────────── */
+
+function contabo_TestConnection(array $params)
+{
+    try {
+        $token = contabo_apiToken(contabo_getCreds($params));
+        $resp = contabo_apiRequest($token, 'GET', '/v1/compute/instances?size=1');
+        logModuleCall('contabo', 'TestConnection', 'ok', $resp);
+        // Also log the product + image catalog so productId/imageId can be discovered
+        // straight after adding the server (before any order exists).
+        try {
+            $products = contabo_apiRequest($token, 'GET', '/v1/compute/products?size=100');
+            logModuleCall('contabo', 'TestConnection-products', 'GET /v1/compute/products', $products);
+        } catch (\Throwable $pe) {
+            logModuleCall('contabo', 'TestConnection-products', 'GET /v1/compute/products', $pe->getMessage());
+        }
+        return ['success' => true, 'error' => ''];
+    } catch (\Throwable $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+function contabo_AdminCustomButtonArray()
+{
+    return [
+        'مزامنة الحالة و IP' => 'sync',
+        'استعراض المنتجات والصور' => 'catalog',
+    ];
+}
+
+function contabo_sync(array $params)
+{
+    try {
+        $id = contabo_instanceId((int) $params['serviceid']);
+        if ($id === '') {
+            return 'No instance id stored for this service.';
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+        $resp = contabo_apiRequest($token, 'GET', '/v1/compute/instances/' . $id);
+        $inst = $resp['data'][0] ?? [];
+        $ip = contabo_extractIp($inst);
+        if ($ip !== '') {
+            Capsule::table('tblhosting')->where('id', $params['serviceid'])->update(['dedicatedip' => $ip]);
+        }
+        logModuleCall('contabo', 'sync', $id, $resp);
+        return 'success';
+    } catch (\Throwable $e) {
+        return $e->getMessage();
+    }
+}
+
+function contabo_catalog(array $params)
+{
+    try {
+        $token = contabo_apiToken(contabo_getCreds($params));
+        $products = contabo_apiRequest($token, 'GET', '/v1/compute/products?size=100');
+        logModuleCall('contabo', 'catalog-products', 'GET /v1/compute/products', $products);
+        try {
+            $images = contabo_apiRequest($token, 'GET', '/v1/compute/images?size=100');
+            logModuleCall('contabo', 'catalog-images', 'GET /v1/compute/images', $images);
+        } catch (\Throwable $ie) {
+            logModuleCall('contabo', 'catalog-images', 'GET /v1/compute/images', $ie->getMessage());
+        }
+        return 'success — راجع Utilities ▸ Logs ▸ Module Log';
+    } catch (\Throwable $e) {
+        return $e->getMessage();
+    }
+}
+
+function contabo_ClientAreaCustomButtonArray()
+{
+    return []; // white-label: clients get no control buttons (owner manages via admin)
+}
+
+function contabo_boot(array $params)
+{
+    return contabo_power($params, 'start');
+}
+
+function contabo_shutdown(array $params)
+{
+    return contabo_power($params, 'stop');
+}
+
+function contabo_reboot(array $params)
+{
+    return contabo_power($params, 'restart');
+}
+
+function contabo_ClientArea(array $params)
+{
+    $sid = (int) $params['serviceid'];
+    $uid = (int) ($params['userid'] ?? 0);
+    $showtech = ($uid === 1); // white-label: only owner (#1) sees server/Contabo details; clients see a managed-service notice
+    $ip = '';
+    $id = '';
+    if ($showtech) {
+        $ip = (string) Capsule::table('tblhosting')->where('id', $sid)->value('dedicatedip');
+        $id = contabo_instanceId($sid);
+        if ($id !== '' && $ip === '') {
+            try {
+                $token = contabo_apiToken(contabo_getCreds($params));
+                $resp = contabo_apiRequest($token, 'GET', '/v1/compute/instances/' . $id);
+                $ip = contabo_extractIp($resp['data'][0] ?? []);
+                if ($ip !== '') {
+                    Capsule::table('tblhosting')->where('id', $sid)->update(['dedicatedip' => $ip]);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+    }
+    return [
+        'templatefile' => 'clientarea',
+        'vars' => ['ip' => $ip, 'instanceid' => $id, 'showtech' => $showtech],
+    ];
+}
+
+function contabo_AdminServicesTabFields(array $params)
+{
+    try {
+        $id = contabo_instanceId((int) $params['serviceid']);
+        if ($id === '') {
+            return ['حالة الخادم' => 'لا يوجد instance مرتبط بعد'];
+        }
+        $token = contabo_apiToken(contabo_getCreds($params));
+        $resp = contabo_apiRequest($token, 'GET', '/v1/compute/instances/' . $id);
+        $inst = $resp['data'][0] ?? [];
+        return [
+            'Instance ID' => htmlspecialchars($id),
+            'الحالة' => htmlspecialchars((string) ($inst['status'] ?? '?')),
+            'IP' => htmlspecialchars(contabo_extractIp($inst)),
+            'المنتج' => htmlspecialchars((string) ($inst['productId'] ?? '')),
+        ];
+    } catch (\Throwable $e) {
+        return ['خطأ' => htmlspecialchars($e->getMessage())];
+    }
+}
