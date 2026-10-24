@@ -1,0 +1,6 @@
+# Never commit real secrets — only *.example templates are allowed
+config.php
+*.env
+.env
+**/secrets*
+*secret*.php
