@@ -1,0 +1,8 @@
+<?php
+// Salasel Babel — WHMCS → ERP integration config.
+// REAL file lives ONLY on the server at /opt/erb-integration/config.php
+// (chmod 600, owned by www-data). NEVER commit the real key to any repo.
+return [
+    'base' => 'https://erb.salaselbabel.com/api/public/ext/v1',
+    'key'  => 'PUT_ERP_API_KEY_HERE',
+];
