@@ -1,0 +1,19 @@
+<?php
+// Salasel Babel — «المحاسب الذكي» ticket assist config (ERB → WHMCS support portal).
+// REAL file lives ONLY on the WHMCS server at /opt/erb-integration/ticket-assist.config.php
+// (chmod 600, owned by the web server user). NEVER commit real values to any repository.
+//
+// secret: the SAME value pasted in ERB → إعدادات المحاسب الذكي → «السر المشترك مع إضافة البوابة»
+//         (at least 32 characters; generate with: openssl rand -hex 32).
+// erb_base: the ERB API base for these endpoints, https only, no trailing slash.
+// One portal can serve several ERB installations: add one entry per installation (up to 10).
+return [
+    'department' => 'Developing Support',
+    'instances' => [
+        [
+            'name'     => 'salasel-erb',
+            'erb_base' => 'https://erb.salaselbabel.com/api/public/assistant',
+            'secret'   => 'PUT_THE_SHARED_SECRET_HERE',
+        ],
+    ],
+];
