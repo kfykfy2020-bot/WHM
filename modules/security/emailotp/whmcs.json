@@ -1,0 +1,24 @@
+{
+  "schema": "1.0",
+  "type": "whmcs-security",
+  "name": "emailotp",
+  "license": "owned",
+  "category": "security",
+  "description": {
+    "name": "Email OTP",
+    "tagline": "One-time login code sent to the user's email.",
+    "long": "Sends a one-time verification code to the user's registered email address as a second step at login. Codes are single-use, time-limited, rate-limited and stored hashed. Bilingual (Arabic/English)."
+  },
+  "logo": {
+    "filename": "logo.png"
+  },
+  "support": {
+    "homepage": "https://salaselbabel.com"
+  },
+  "authors": [
+    {
+      "name": "Salasel Babel",
+      "homepage": "https://salaselbabel.com"
+    }
+  ]
+}
