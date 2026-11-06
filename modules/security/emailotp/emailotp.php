@@ -21,7 +21,7 @@ if (!defined('WHMCS')) {
     die('This file cannot be accessed directly');
 }
 
-if (!defined('EMAILOTP_LENGTH'))       define('EMAILOTP_LENGTH', 6);        // digits
+if (!defined('EMAILOTP_LENGTH'))       define('EMAILOTP_LENGTH', 4);        // digits
 if (!defined('EMAILOTP_TTL'))          define('EMAILOTP_TTL', 900);         // code lifetime (seconds) = 15 min
 if (!defined('EMAILOTP_RESEND_WAIT'))  define('EMAILOTP_RESEND_WAIT', 60);  // min seconds between code emails
 if (!defined('EMAILOTP_MAX_ATTEMPTS')) define('EMAILOTP_MAX_ATTEMPTS', 5);  // wrong tries before the code is burned

@@ -94,6 +94,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Resend to the same email (GET ?resend=1), throttled server-side.
+if ($step === 'email' && isset($_GET['resend']) && !empty($_SESSION['pwless_email'])) {
+    $email = $_SESSION['pwless_email'];
+    $uid   = (int) (isset($_SESSION['pwless_uid']) ? $_SESSION['pwless_uid'] : 0);
+    if ($uid > 0) {
+        emailotp_ensureTable();
+        $now = time();
+        $row = Capsule::table('mod_emailotp')->where('user_id', $uid)->first();
+        if (!$row || ($now - (int) $row->last_sent_at) >= EMAILOTP_RESEND_WAIT) {
+            $code = emailotp_generate();
+            emailotp_send($email, $code);
+            Capsule::table('mod_emailotp')->updateOrInsert(
+                array('user_id' => $uid),
+                array('code_hash' => emailotp_hash($code), 'expires_at' => $now + EMAILOTP_TTL, 'attempts' => 0, 'last_sent_at' => $now)
+            );
+        }
+        $step        = 'code';
+        $maskedEmail = emailotp_mask($email);
+        $notice      = 'أعدنا إرسال الرمز إلى بريدك.';
+    }
+}
+
 $ttlMin = (int) round(EMAILOTP_TTL / 60);
 
 $ca = new ClientArea();
@@ -104,6 +126,8 @@ $ca->assign('pwless_error', $error);
 $ca->assign('pwless_notice', $notice);
 $ca->assign('pwless_masked', $maskedEmail);
 $ca->assign('pwless_ttl', $ttlMin);
+$ca->assign('pwless_len', EMAILOTP_LENGTH);
+$ca->assign('pwless_resend', EMAILOTP_RESEND_WAIT);
 $ca->assign('pwless_action', $systemUrl . '/signin.php');
 $ca->setTemplate('signin');
 $ca->output();
