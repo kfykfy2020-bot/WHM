@@ -10,10 +10,23 @@
     </div>
 </section>
 
+{literal}<style>
+#footer .footer-brand{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:0;text-align:center;line-height:1.5}
+#footer .footer-brand img{height:34px;width:auto;flex:0 0 auto}
+@media (max-width:767px){
+    #footer{padding-top:18px;padding-bottom:18px}
+    #footer .footer-brand{gap:8px}
+    #footer .footer-brand img{height:26px}
+}
+</style>{/literal}
 <section id="footer">
     <div class="container">
         <a href="#" class="back-to-top"><i class="fas fa-chevron-up"></i></a>
+        {if $templatefile == 'login' || $templatefile == 'signin'}
+        <p class="footer-brand"><img src="{$WEB_ROOT}/assets/img/sb-icon.png" alt="سلاسل بابل"> <span>{lang key="copyrightFooterNotice" year=$date_year company=$companyname}</span></p>
+        {else}
         <p>{lang key="copyrightFooterNotice" year=$date_year company=$companyname}</p>
+        {/if}
     </div>
 </section>
 
