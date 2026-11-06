@@ -1,15 +1,17 @@
 <?php
 /**
  * Passwordless email-OTP sign-in for Salasel Babel WHMCS client area.
- * Flow: enter email -> emailed one-time code -> verify -> SSO login (no password).
+ * Rendered inside the active client-area template (six) so it matches the
+ * panel design. Flow: email -> emailed one-time code -> verify -> SSO login.
  * Reuses the Email OTP module helpers (code gen / send / hash / table).
  */
+
+use WHMCS\ClientArea;
+use WHMCS\Database\Capsule;
 
 define('CLIENTAREA', true);
 require __DIR__ . '/init.php';
 require __DIR__ . '/modules/security/emailotp/emailotp.php';
-
-use WHMCS\Database\Capsule;
 
 $systemUrl = rtrim(\WHMCS\Config\Setting::getValue('SystemURL') ?: '', '/');
 
@@ -93,62 +95,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $ttlMin = (int) round(EMAILOTP_TTL / 60);
-?>
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>تسجيل الدخول — مؤسسة سلاسل بابل لتقنية المعلومات</title>
-<meta name="robots" content="noindex,nofollow">
-<style>
-  :root{--brand:#102A6B;--brand2:#1d4ed8;--ink:#243b53;--muted:#627d98;--line:#d9e2ec;--bg:#eef2f7}
-  *{box-sizing:border-box}
-  body{font-family:'Tajawal','Segoe UI',Tahoma,Arial,sans-serif;background:linear-gradient(160deg,#f4f7fb,#e6ecf5);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:var(--ink)}
-  .card{width:100%;max-width:420px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 18px 50px rgba(16,42,107,.12);padding:30px 26px;text-align:center}
-  .logo{height:54px;width:auto;margin:0 auto 14px;display:block;object-fit:contain}
-  h1{font-size:20px;margin:0 0 6px;color:var(--brand)}
-  .lead{color:var(--muted);font-size:14px;margin:0 0 22px;line-height:1.8}
-  label{display:block;text-align:right;font-weight:700;font-size:14px;margin:0 0 6px}
-  input[type=email],input[type=text]{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:11px;font-size:16px;font-family:inherit;outline:none;transition:border .15s,box-shadow .15s}
-  input:focus{border-color:var(--brand2);box-shadow:0 0 0 3px rgba(29,78,216,.12)}
-  .code-input{text-align:center;letter-spacing:10px;font-size:24px;font-weight:700}
-  .btn{width:100%;margin-top:18px;padding:13px;border:0;border-radius:11px;background:var(--brand);color:#fff;font-size:16px;font-weight:700;font-family:inherit;cursor:pointer;transition:background .15s}
-  .btn:hover{background:#0b1f52}
-  .msg{border-radius:11px;padding:11px 13px;font-size:13.5px;margin-bottom:16px;line-height:1.7}
-  .msg.err{background:#fff0f1;color:#b4232d;border:1px solid #f3c9cd}
-  .msg.ok{background:#eef8f0;color:#1a7a3a;border:1px solid #c7e7cf}
-  .sub{color:var(--muted);font-size:13px;margin-top:14px}
-  .sub a{color:var(--brand2);text-decoration:none}
-  .masked{direction:ltr;font-weight:700;color:var(--ink)}
-  .foot{margin-top:22px;color:#9fb0c3;font-size:12px}
-</style>
-</head>
-<body>
-  <form class="card" method="post" action="<?php echo htmlspecialchars($systemUrl); ?>/signin.php" autocomplete="off">
-    <img class="logo" src="<?php echo htmlspecialchars($systemUrl); ?>/assets/img/logo.png" alt="مؤسسة سلاسل بابل لتقنية المعلومات">
 
-    <?php if ($error): ?><div class="msg err"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
-    <?php if ($notice): ?><div class="msg ok"><?php echo htmlspecialchars($notice); ?></div><?php endif; ?>
-
-    <?php if ($step === 'email'): ?>
-      <h1>تسجيل الدخول</h1>
-      <p class="lead">أدخل بريدك الإلكتروني ويصلك <strong>رمز تحقّق</strong> للدخول — بدون كلمة مرور.</p>
-      <input type="hidden" name="step" value="email">
-      <label for="email">البريد الإلكتروني</label>
-      <input type="email" id="email" name="email" placeholder="example@email.com" required autofocus>
-      <button class="btn" type="submit">إرسال رمز التحقق</button>
-    <?php else: ?>
-      <h1>أدخل رمز التحقق</h1>
-      <p class="lead">أرسلنا رمزًا من 6 أرقام إلى:<br><span class="masked"><?php echo htmlspecialchars($maskedEmail); ?></span><br>صالح لمدة <?php echo $ttlMin; ?> دقيقة.</p>
-      <input type="hidden" name="step" value="code">
-      <label for="code">رمز التحقق</label>
-      <input type="text" id="code" name="code" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="······" required autofocus>
-      <button class="btn" type="submit">تحقّق وادخل</button>
-      <div class="sub"><a href="<?php echo htmlspecialchars($systemUrl); ?>/signin.php">لم يصلك الرمز؟ ابدأ من جديد</a></div>
-    <?php endif; ?>
-
-    <div class="foot">© <?php echo date('Y'); ?> مؤسسة سلاسل بابل لتقنية المعلومات</div>
-  </form>
-</body>
-</html>
+$ca = new ClientArea();
+$ca->setPageTitle('تسجيل الدخول');
+$ca->initPage();
+$ca->assign('pwless_step', $step);
+$ca->assign('pwless_error', $error);
+$ca->assign('pwless_notice', $notice);
+$ca->assign('pwless_masked', $maskedEmail);
+$ca->assign('pwless_ttl', $ttlMin);
+$ca->assign('pwless_action', $systemUrl . '/signin.php');
+$ca->setTemplate('signin');
+$ca->output();

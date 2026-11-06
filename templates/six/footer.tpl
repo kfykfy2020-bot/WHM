@@ -13,7 +13,7 @@
 <section id="footer">
     <div class="container">
         <a href="#" class="back-to-top"><i class="fas fa-chevron-up"></i></a>
-        {if $templatefile == 'login'}
+        {if $templatefile == 'login' || $templatefile == 'signin'}
         <p class="footer-brand-logo"><img src="{$WEB_ROOT}/assets/img/footer-logo.webp" alt="مؤسسة سلاسل بابل لتقنية المعلومات" style="display:block;margin:0 auto;max-width:100%;height:auto;max-height:46px;"></p>
         {else}
         <p>{lang key="copyrightFooterNotice" year=$date_year company=$companyname}</p>
